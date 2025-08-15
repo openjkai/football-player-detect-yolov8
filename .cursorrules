@@ -1,0 +1,14 @@
+### Git Command Format
+Please use this kind of git Command:
+```
+feat(): add new feature or enhancement
+fix(): fix bug or issue
+refactor(): improve code structure without changing functionality
+chore(): update dependencies, configs, or maintenance tasks
+docs(): update documentation
+test(): add or update tests
+style(): formatting, missing semicolons, etc
+perf(): performance improvements
+ci(): CI/CD changes
+build(): build system changes
+```
