@@ -14,8 +14,30 @@ Usage:
 import argparse
 import cv2
 import os
+import sys
+import time
 from pathlib import Path
 from ultralytics import YOLO
+
+def print_progress_bar(iteration, total, prefix='Progress', suffix='Complete', length=50, fill='█'):
+    """
+    Call in a loop to create terminal progress bar
+    
+    Args:
+        iteration   - Required  : current iteration (Int)
+        total       - Required  : total iterations (Int)
+        prefix      - Optional  : prefix string (Str)
+        suffix      - Optional  : suffix string (Str)
+        length      - Optional  : character length of bar (Int)
+        fill        - Optional  : bar fill character (Str)
+    """
+    percent = ("{0:.1f}").format(100 * (iteration / float(total)))
+    filled_length = int(length * iteration // total)
+    bar = fill * filled_length + '-' * (length - filled_length)
+    sys.stdout.write(f'\r{prefix} |{bar}| {percent}% {suffix}')
+    sys.stdout.flush()
+    if iteration == total:
+        print()
 
 def detect_on_image(model, image_path, output_path=None, conf_threshold=0.25):
     """
@@ -92,6 +114,7 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
         writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     
     frame_count = 0
+    start_time = time.time()
     
     try:
         while True:
@@ -100,7 +123,7 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
                 break
             
             frame_count += 1
-            print(f"Processing frame {frame_count}/{total_frames}", end='\r')
+            print_progress_bar(frame_count, total_frames, prefix='Processing', suffix='Complete')
             
             # Run inference on frame
             results = model.predict(source=frame, conf=conf_threshold, save=False, verbose=False)
@@ -122,7 +145,11 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
             writer.release()
             print(f"\nOutput video saved to: {output_path}")
         cv2.destroyAllWindows()
+        end_time = time.time()
+        processing_time = end_time - start_time
         print(f"\nProcessed {frame_count} frames")
+        print(f"Total processing time: {processing_time:.2f} seconds")
+        print(f"Detection completed successfully!")
 
 def main():
     parser = argparse.ArgumentParser(description='Football Player Detection using YOLOv8')
