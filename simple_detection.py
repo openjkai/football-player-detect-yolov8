@@ -39,6 +39,20 @@ def print_progress_bar(iteration, total, prefix='Progress', suffix='Complete', l
     if iteration == total:
         print()
 
+def print_detection_stats(frame_count, total_frames, detection_count, max_detections):
+    """
+    Print detection statistics for current frame
+    
+    Args:
+        frame_count: Current frame number
+        total_frames: Total frames in video
+        detection_count: Players detected in current frame
+        max_detections: Maximum detections seen so far
+    """
+    stats = f"Frame {frame_count}/{total_frames} | Players: {detection_count} | Max: {max_detections}"
+    sys.stdout.write(f'\r{stats}')
+    sys.stdout.flush()
+
 def detect_on_image(model, image_path, output_path=None, conf_threshold=0.25):
     """
     Run detection on a single image
@@ -115,6 +129,7 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
     
     frame_count = 0
     start_time = time.time()
+    max_detections = 0
     
     try:
         while True:
@@ -123,10 +138,16 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
                 break
             
             frame_count += 1
-            print_progress_bar(frame_count, total_frames, prefix='Processing', suffix='Complete')
             
             # Run inference on frame
             results = model.predict(source=frame, conf=conf_threshold, save=False, verbose=False)
+            
+            # Get detection count for this frame
+            detection_count = len(results[0].boxes)
+            max_detections = max(max_detections, detection_count)
+            
+            # Show detection stats
+            print_detection_stats(frame_count, total_frames, detection_count, max_detections)
             
             # Draw bounding boxes
             annotated_frame = results[0].plot()
@@ -148,6 +169,7 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
         end_time = time.time()
         processing_time = end_time - start_time
         print(f"\nProcessed {frame_count} frames")
+        print(f"Maximum players detected in a single frame: {max_detections}")
         print(f"Total processing time: {processing_time:.2f} seconds")
         print(f"Detection completed successfully!")
 
