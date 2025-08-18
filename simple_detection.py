@@ -130,6 +130,8 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
     frame_count = 0
     start_time = time.time()
     max_detections = 0
+    total_confidence = 0.0
+    total_detections = 0
     
     try:
         while True:
@@ -145,6 +147,12 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
             # Get detection count for this frame
             detection_count = len(results[0].boxes)
             max_detections = max(max_detections, detection_count)
+            
+            # Accumulate confidence scores
+            if detection_count > 0:
+                for box in results[0].boxes:
+                    total_confidence += box.conf.item()
+                    total_detections += 1
             
             # Show detection stats
             print_detection_stats(frame_count, total_frames, detection_count, max_detections)
@@ -170,6 +178,9 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
         processing_time = end_time - start_time
         print(f"\nProcessed {frame_count} frames")
         print(f"Maximum players detected in a single frame: {max_detections}")
+        if total_detections > 0:
+            avg_confidence = total_confidence / total_detections
+            print(f"Average detection confidence: {avg_confidence:.3f}")
         print(f"Total processing time: {processing_time:.2f} seconds")
         print(f"Detection completed successfully!")
 
