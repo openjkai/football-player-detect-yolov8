@@ -133,6 +133,8 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
     total_confidence = 0.0
     total_detections = 0
     frames_with_detections = 0
+    min_confidence = float('inf')
+    max_confidence = 0.0
     
     try:
         while True:
@@ -153,8 +155,11 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
             if detection_count > 0:
                 frames_with_detections += 1
                 for box in results[0].boxes:
-                    total_confidence += box.conf.item()
+                    confidence = box.conf.item()
+                    total_confidence += confidence
                     total_detections += 1
+                    min_confidence = min(min_confidence, confidence)
+                    max_confidence = max(max_confidence, confidence)
             
             # Show detection stats
             print_detection_stats(frame_count, total_frames, detection_count, max_detections)
@@ -179,10 +184,12 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
         end_time = time.time()
         processing_time = end_time - start_time
         print(f"\nProcessed {frame_count} frames")
+        print(f"Total player detections: {total_detections}")
         print(f"Maximum players detected in a single frame: {max_detections}")
         if total_detections > 0:
             avg_confidence = total_confidence / total_detections
             print(f"Average detection confidence: {avg_confidence:.3f}")
+            print(f"Confidence range: {min_confidence:.3f} - {max_confidence:.3f}")
         
         # Calculate and display detection rate
         detection_rate = (frames_with_detections / frame_count * 100) if frame_count > 0 else 0
