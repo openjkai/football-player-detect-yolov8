@@ -195,6 +195,14 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
         detection_rate = (frames_with_detections / frame_count * 100) if frame_count > 0 else 0
         print(f"Detection rate: {detection_rate:.1f}% of frames had players")
         
+        # Calculate and display detection density
+        avg_players_per_frame = total_detections / frame_count if frame_count > 0 else 0
+        print(f"Average players per frame: {avg_players_per_frame:.2f}")
+        
+        # Calculate and display detection efficiency
+        detections_per_second = total_detections / processing_time if processing_time > 0 else 0
+        print(f"Detection rate: {detections_per_second:.1f} players/second")
+        
         # Calculate and display processing speed
         fps_processed = frame_count / processing_time if processing_time > 0 else 0
         print(f"Processing speed: {fps_processed:.2f} FPS")
