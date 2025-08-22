@@ -135,6 +135,7 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
     frames_with_detections = 0
     min_confidence = float('inf')
     max_confidence = 0.0
+    detection_counts = []
     
     try:
         while True:
@@ -150,6 +151,7 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
             # Get detection count for this frame
             detection_count = len(results[0].boxes)
             max_detections = max(max_detections, detection_count)
+            detection_counts.append(detection_count)
             
             # Accumulate confidence scores
             if detection_count > 0:
@@ -198,6 +200,14 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
         # Calculate and display detection density
         avg_players_per_frame = total_detections / frame_count if frame_count > 0 else 0
         print(f"Average players per frame: {avg_players_per_frame:.2f}")
+        
+        # Calculate and display detection consistency
+        if len(detection_counts) > 1:
+            import statistics
+            detection_std = statistics.stdev(detection_counts)
+            detection_median = statistics.median(detection_counts)
+            print(f"Detection consistency (std dev): {detection_std:.2f} players")
+            print(f"Median players per frame: {detection_median:.1f}")
         
         # Calculate and display detection efficiency
         detections_per_second = total_detections / processing_time if processing_time > 0 else 0
