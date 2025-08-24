@@ -136,6 +136,7 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
     min_confidence = float('inf')
     max_confidence = 0.0
     detection_counts = []
+    detection_distribution = {'low': 0, 'medium': 0, 'high': 0}
     
     try:
         while True:
@@ -152,6 +153,16 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
             detection_count = len(results[0].boxes)
             max_detections = max(max_detections, detection_count)
             detection_counts.append(detection_count)
+            
+            # Categorize frame complexity
+            if detection_count == 0:
+                pass  # No detections
+            elif detection_count <= 3:
+                detection_distribution['low'] += 1
+            elif detection_count <= 6:
+                detection_distribution['medium'] += 1
+            else:
+                detection_distribution['high'] += 1
             
             # Accumulate confidence scores
             if detection_count > 0:
@@ -208,6 +219,12 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
             detection_median = statistics.median(detection_counts)
             print(f"Detection consistency (std dev): {detection_std:.2f} players")
             print(f"Median players per frame: {detection_median:.1f}")
+        
+        # Display detection distribution
+        print(f"Scene complexity distribution:")
+        print(f"  Low (1-3 players): {detection_distribution['low']} frames")
+        print(f"  Medium (4-6 players): {detection_distribution['medium']} frames")
+        print(f"  High (7+ players): {detection_distribution['high']} frames")
         
         # Calculate and display detection efficiency
         detections_per_second = total_detections / processing_time if processing_time > 0 else 0
