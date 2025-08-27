@@ -16,6 +16,8 @@ import cv2
 import os
 import sys
 import time
+import psutil
+import gc
 from pathlib import Path
 from ultralytics import YOLO
 
@@ -52,6 +54,69 @@ def print_detection_stats(frame_count, total_frames, detection_count, max_detect
     stats = f"Frame {frame_count}/{total_frames} | Players: {detection_count} | Max: {max_detections}"
     sys.stdout.write(f'\r{stats}')
     sys.stdout.flush()
+
+def get_system_stats():
+    """
+    Get current system resource usage
+    
+    Returns:
+        dict: System resource information
+    """
+    process = psutil.Process()
+    memory_info = process.memory_info()
+    cpu_percent = process.cpu_percent()
+    
+    return {
+        'memory_mb': memory_info.rss / 1024 / 1024,
+        'cpu_percent': cpu_percent,
+        'memory_percent': process.memory_percent()
+    }
+
+def generate_performance_report(frame_count, processing_time, total_detections, 
+                              avg_confidence, detection_rate, fps_processed):
+    """
+    Generate a comprehensive performance report
+    
+    Args:
+        frame_count: Total frames processed
+        processing_time: Total processing time
+        total_detections: Total player detections
+        avg_confidence: Average detection confidence
+        detection_rate: Percentage of frames with detections
+        fps_processed: Processing speed in FPS
+    """
+    print("\n" + "="*60)
+    print("PERFORMANCE ANALYSIS REPORT")
+    print("="*60)
+    
+    # Efficiency metrics
+    efficiency_score = (total_detections / processing_time) if processing_time > 0 else 0
+    quality_score = avg_confidence * (detection_rate / 100) if total_detections > 0 else 0
+    
+    print(f"Overall Efficiency Score: {efficiency_score:.2f} detections/second")
+    print(f"Quality Score: {quality_score:.3f} (confidence × detection rate)")
+    
+    # Performance recommendations
+    print("\nPERFORMANCE RECOMMENDATIONS:")
+    if fps_processed < 10:
+        print("  ⚠️  Processing speed is low. Consider:")
+        print("     - Using GPU acceleration if available")
+        print("     - Reducing input resolution")
+        print("     - Lowering confidence threshold")
+    
+    if avg_confidence < 0.7:
+        print("  ⚠️  Detection confidence is low. Consider:")
+        print("     - Retraining the model with more data")
+        print("     - Adjusting confidence threshold")
+        print("     - Checking input video quality")
+    
+    if detection_rate < 50:
+        print("  ⚠️  Low detection rate. Consider:")
+        print("     - Checking if video contains players")
+        print("     - Adjusting model parameters")
+        print("     - Verifying model training data")
+    
+    print("="*60)
 
 def detect_on_image(model, image_path, output_path=None, conf_threshold=0.25):
     """
@@ -138,6 +203,11 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
     detection_counts = []
     detection_distribution = {'low': 0, 'medium': 0, 'high': 0}
     
+    # Get initial system stats
+    initial_stats = get_system_stats()
+    print(f"Initial memory usage: {initial_stats['memory_mb']:.1f} MB")
+    print(f"Initial CPU usage: {initial_stats['cpu_percent']:.1f}%")
+    
     try:
         while True:
             ret, frame = cap.read()
@@ -176,6 +246,11 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
             
             # Show detection stats
             print_detection_stats(frame_count, total_frames, detection_count, max_detections)
+            
+            # Monitor system resources every 50 frames
+            if frame_count % 50 == 0:
+                current_stats = get_system_stats()
+                print(f"\n[Frame {frame_count}] Memory: {current_stats['memory_mb']:.1f} MB, CPU: {current_stats['cpu_percent']:.1f}%")
             
             # Draw bounding boxes
             annotated_frame = results[0].plot()
@@ -234,6 +309,21 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
         fps_processed = frame_count / processing_time if processing_time > 0 else 0
         print(f"Processing speed: {fps_processed:.2f} FPS")
         print(f"Total processing time: {processing_time:.2f} seconds")
+        
+        # System resource summary
+        final_stats = get_system_stats()
+        memory_used = final_stats['memory_mb'] - initial_stats['memory_mb']
+        print(f"\nSYSTEM RESOURCE SUMMARY:")
+        print(f"Memory used: {memory_used:.1f} MB")
+        print(f"Final memory: {final_stats['memory_mb']:.1f} MB")
+        print(f"Peak CPU usage: {final_stats['cpu_percent']:.1f}%")
+        
+        # Generate performance report
+        generate_performance_report(frame_count, processing_time, total_detections, 
+                                 avg_confidence, detection_rate, fps_processed)
+        
+        # Clean up memory
+        gc.collect()
         print(f"Detection completed successfully!")
 
 def main():
