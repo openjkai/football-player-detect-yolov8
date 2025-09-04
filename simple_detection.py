@@ -18,6 +18,8 @@ import sys
 import time
 import psutil
 import gc
+import json
+from datetime import datetime
 from pathlib import Path
 from ultralytics import YOLO
 
@@ -71,6 +73,87 @@ def get_system_stats():
         'cpu_percent': cpu_percent,
         'memory_percent': process.memory_percent()
     }
+
+def save_detection_report(input_file, frame_count, processing_time, total_detections, 
+                         avg_confidence, detection_rate, fps_processed, detection_distribution,
+                         min_confidence, max_confidence, detection_std, detection_median,
+                         memory_used, final_memory, output_dir="reports"):
+    """
+    Save detection statistics to a JSON report file
+    
+    Args:
+        input_file: Path to input file
+        frame_count: Total frames processed
+        processing_time: Total processing time
+        total_detections: Total player detections
+        avg_confidence: Average detection confidence
+        detection_rate: Percentage of frames with detections
+        fps_processed: Processing speed in FPS
+        detection_distribution: Scene complexity distribution
+        min_confidence: Minimum confidence score
+        max_confidence: Maximum confidence score
+        detection_std: Standard deviation of detections
+        detection_median: Median detections per frame
+        memory_used: Memory consumed during processing
+        final_memory: Final memory usage
+        output_dir: Directory to save reports
+    """
+    # Create reports directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Generate report data
+    report_data = {
+        "metadata": {
+            "input_file": str(input_file),
+            "timestamp": datetime.now().isoformat(),
+            "processing_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        },
+        "processing_stats": {
+            "total_frames": frame_count,
+            "processing_time_seconds": round(processing_time, 2),
+            "processing_speed_fps": round(fps_processed, 2),
+            "memory_used_mb": round(memory_used, 1),
+            "final_memory_mb": round(final_memory, 1)
+        },
+        "detection_stats": {
+            "total_detections": total_detections,
+            "detection_rate_percent": round(detection_rate, 1),
+            "avg_players_per_frame": round(total_detections / frame_count if frame_count > 0 else 0, 2),
+            "detections_per_second": round(total_detections / processing_time if processing_time > 0 else 0, 1)
+        },
+        "confidence_stats": {
+            "average_confidence": round(avg_confidence, 3) if total_detections > 0 else 0,
+            "min_confidence": round(min_confidence, 3) if min_confidence != float('inf') else 0,
+            "max_confidence": round(max_confidence, 3),
+            "confidence_range": round(max_confidence - min_confidence, 3) if min_confidence != float('inf') else 0
+        },
+        "consistency_stats": {
+            "detection_std_dev": round(detection_std, 2) if detection_std else 0,
+            "median_players_per_frame": round(detection_median, 1) if detection_median else 0
+        },
+        "scene_complexity": {
+            "low_complexity_frames": detection_distribution['low'],
+            "medium_complexity_frames": detection_distribution['medium'],
+            "high_complexity_frames": detection_distribution['high']
+        },
+        "performance_scores": {
+            "efficiency_score": round(total_detections / processing_time if processing_time > 0 else 0, 2),
+            "quality_score": round(avg_confidence * (detection_rate / 100) if total_detections > 0 else 0, 3)
+        }
+    }
+    
+    # Generate filename
+    input_name = Path(input_file).stem
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_filename = f"detection_report_{input_name}_{timestamp}.json"
+    report_path = os.path.join(output_dir, report_filename)
+    
+    # Save report
+    with open(report_path, 'w') as f:
+        json.dump(report_data, f, indent=2)
+    
+    print(f"Detection report saved to: {report_path}")
+    return report_path
 
 def generate_performance_report(frame_count, processing_time, total_detections, 
                               avg_confidence, detection_rate, fps_processed):
@@ -322,24 +405,88 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
         generate_performance_report(frame_count, processing_time, total_detections, 
                                  avg_confidence, detection_rate, fps_processed)
         
+        # Save detection report to JSON
+        save_detection_report(video_path, frame_count, processing_time, total_detections,
+                            avg_confidence, detection_rate, fps_processed, detection_distribution,
+                            min_confidence, max_confidence, detection_std, detection_median,
+                            memory_used, final_stats['memory_mb'])
+        
         # Clean up memory
         gc.collect()
         print(f"Detection completed successfully!")
 
+def process_batch_files(model, input_dir, output_dir, conf_threshold):
+    """
+    Process multiple files in a directory
+    
+    Args:
+        model: YOLO model instance
+        input_dir: Directory containing input files
+        output_dir: Directory to save outputs
+        conf_threshold: Confidence threshold
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir) if output_dir else None
+    
+    video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv']
+    image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp']
+    all_extensions = video_extensions + image_extensions
+    
+    # Find all supported files
+    files_to_process = []
+    for ext in all_extensions:
+        files_to_process.extend(input_path.glob(f"*{ext}"))
+        files_to_process.extend(input_path.glob(f"*{ext.upper()}"))
+    
+    if not files_to_process:
+        print(f"No supported files found in {input_dir}")
+        return
+    
+    print(f"Found {len(files_to_process)} files to process")
+    
+    # Process each file
+    for i, file_path in enumerate(files_to_process, 1):
+        print(f"\n{'='*60}")
+        print(f"Processing file {i}/{len(files_to_process)}: {file_path.name}")
+        print(f"{'='*60}")
+        
+        # Generate output path if specified
+        output_file = None
+        if output_path:
+            output_path.mkdir(exist_ok=True)
+            if file_path.suffix.lower() in video_extensions:
+                output_file = output_path / f"detected_{file_path.stem}.mp4"
+            else:
+                output_file = output_path / f"detected_{file_path.name}"
+        
+        # Process file
+        try:
+            if file_path.suffix.lower() in video_extensions:
+                detect_on_video(model, str(file_path), str(output_file) if output_file else None, conf_threshold)
+            else:
+                detect_on_image(model, str(file_path), str(output_file) if output_file else None, conf_threshold)
+        except Exception as e:
+            print(f"Error processing {file_path.name}: {e}")
+            continue
+    
+    print(f"\nBatch processing completed! Processed {len(files_to_process)} files.")
+
 def main():
     parser = argparse.ArgumentParser(description='Football Player Detection using YOLOv8')
-    parser.add_argument('--input', '-i', required=True, help='Path to input image or video')
-    parser.add_argument('--output', '-o', help='Path to output file (optional)')
+    parser.add_argument('--input', '-i', required=True, help='Path to input image, video, or directory')
+    parser.add_argument('--output', '-o', help='Path to output file or directory (optional)')
     parser.add_argument('--model', '-m', default='runs/detect/train2/weights/best.pt', 
                        help='Path to model weights (default: runs/detect/train2/weights/best.pt)')
     parser.add_argument('--conf', '-c', type=float, default=0.25, 
                        help='Confidence threshold (default: 0.25)')
+    parser.add_argument('--batch', '-b', action='store_true',
+                       help='Process all supported files in the input directory')
     
     args = parser.parse_args()
     
-    # Check if input file exists
+    # Check if input exists
     if not os.path.exists(args.input):
-        print(f"Error: Input file not found: {args.input}")
+        print(f"Error: Input path not found: {args.input}")
         return
     
     # Check if model exists
@@ -353,7 +500,12 @@ def main():
     model = YOLO(args.model)
     print("Model loaded successfully!")
     
-    # Determine input type
+    # Check if batch processing is requested
+    if args.batch or os.path.isdir(args.input):
+        process_batch_files(model, args.input, args.output, args.conf)
+        return
+    
+    # Single file processing
     input_path = Path(args.input)
     video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv']
     image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp']
