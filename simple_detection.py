@@ -19,9 +19,16 @@ import time
 import psutil
 import gc
 import json
+import yaml
 from datetime import datetime
 from pathlib import Path
 from ultralytics import YOLO
+try:
+    import matplotlib.pyplot as plt
+    import numpy as np
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
 
 def print_progress_bar(iteration, total, prefix='Progress', suffix='Complete', length=50, fill='█'):
     """
@@ -73,6 +80,118 @@ def get_system_stats():
         'cpu_percent': cpu_percent,
         'memory_percent': process.memory_percent()
     }
+
+def load_config(config_path="config.yaml"):
+    """
+    Load configuration from YAML file
+    
+    Args:
+        config_path: Path to configuration file
+        
+    Returns:
+        dict: Configuration parameters
+    """
+    default_config = {
+        'model_path': 'runs/detect/train2/weights/best.pt',
+        'confidence_threshold': 0.25,
+        'output_dir': 'outputs',
+        'reports_dir': 'reports',
+        'generate_charts': True,
+        'save_reports': True,
+        'show_progress': True,
+        'monitor_resources': True
+    }
+    
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                user_config = yaml.safe_load(f)
+                default_config.update(user_config)
+                print(f"Configuration loaded from {config_path}")
+        except Exception as e:
+            print(f"Error loading config: {e}. Using defaults.")
+    else:
+        # Create default config file
+        with open(config_path, 'w') as f:
+            yaml.dump(default_config, f, default_flow_style=False)
+        print(f"Default configuration created at {config_path}")
+    
+    return default_config
+
+def generate_detection_charts(detection_counts, detection_distribution, confidence_values, 
+                            input_file, output_dir="charts"):
+    """
+    Generate visualization charts for detection data
+    
+    Args:
+        detection_counts: List of detection counts per frame
+        detection_distribution: Dictionary of complexity distribution
+        confidence_values: List of confidence scores
+        input_file: Input file name for chart titles
+        output_dir: Directory to save charts
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        print("Matplotlib not available. Skipping chart generation.")
+        return
+    
+    os.makedirs(output_dir, exist_ok=True)
+    input_name = Path(input_file).stem
+    
+    # Create figure with subplots
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+    fig.suptitle(f'Detection Analysis: {input_name}', fontsize=16, fontweight='bold')
+    
+    # 1. Detection counts over time
+    ax1.plot(detection_counts, linewidth=2, color='blue', alpha=0.7)
+    ax1.fill_between(range(len(detection_counts)), detection_counts, alpha=0.3, color='blue')
+    ax1.set_title('Players Detected Over Time')
+    ax1.set_xlabel('Frame Number')
+    ax1.set_ylabel('Number of Players')
+    ax1.grid(True, alpha=0.3)
+    
+    # 2. Scene complexity distribution
+    complexity_labels = ['Low\n(1-3 players)', 'Medium\n(4-6 players)', 'High\n(7+ players)']
+    complexity_values = [detection_distribution['low'], detection_distribution['medium'], 
+                        detection_distribution['high']]
+    colors = ['#90EE90', '#FFD700', '#FF6B6B']
+    
+    wedges, texts, autotexts = ax2.pie(complexity_values, labels=complexity_labels, 
+                                      autopct='%1.1f%%', colors=colors, startangle=90)
+    ax2.set_title('Scene Complexity Distribution')
+    
+    # 3. Detection count histogram
+    ax3.hist(detection_counts, bins=20, edgecolor='black', alpha=0.7, color='green')
+    ax3.set_title('Detection Count Distribution')
+    ax3.set_xlabel('Number of Players per Frame')
+    ax3.set_ylabel('Frequency')
+    ax3.grid(True, alpha=0.3)
+    
+    # 4. Confidence score distribution
+    if confidence_values:
+        ax4.hist(confidence_values, bins=30, edgecolor='black', alpha=0.7, color='orange')
+        ax4.set_title('Confidence Score Distribution')
+        ax4.set_xlabel('Confidence Score')
+        ax4.set_ylabel('Frequency')
+        ax4.grid(True, alpha=0.3)
+        ax4.axvline(np.mean(confidence_values), color='red', linestyle='--', 
+                   label=f'Mean: {np.mean(confidence_values):.3f}')
+        ax4.legend()
+    else:
+        ax4.text(0.5, 0.5, 'No detections found', ha='center', va='center', 
+                transform=ax4.transAxes, fontsize=14)
+        ax4.set_title('Confidence Score Distribution')
+    
+    plt.tight_layout()
+    
+    # Save chart
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    chart_filename = f"detection_charts_{input_name}_{timestamp}.png"
+    chart_path = os.path.join(output_dir, chart_filename)
+    plt.savefig(chart_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Detection charts saved to: {chart_path}")
+    return chart_path
 
 def save_detection_report(input_file, frame_count, processing_time, total_detections, 
                          avg_confidence, detection_rate, fps_processed, detection_distribution,
@@ -285,6 +404,7 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
     max_confidence = 0.0
     detection_counts = []
     detection_distribution = {'low': 0, 'medium': 0, 'high': 0}
+    confidence_values = []
     
     # Get initial system stats
     initial_stats = get_system_stats()
@@ -326,6 +446,7 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
                     total_detections += 1
                     min_confidence = min(min_confidence, confidence)
                     max_confidence = max(max_confidence, confidence)
+                    confidence_values.append(confidence)
             
             # Show detection stats
             print_detection_stats(frame_count, total_frames, detection_count, max_detections)
@@ -405,6 +526,9 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
         generate_performance_report(frame_count, processing_time, total_detections, 
                                  avg_confidence, detection_rate, fps_processed)
         
+        # Generate detection charts
+        generate_detection_charts(detection_counts, detection_distribution, confidence_values, video_path)
+        
         # Save detection report to JSON
         save_detection_report(video_path, frame_count, processing_time, total_detections,
                             avg_confidence, detection_rate, fps_processed, detection_distribution,
@@ -475,14 +599,25 @@ def main():
     parser = argparse.ArgumentParser(description='Football Player Detection using YOLOv8')
     parser.add_argument('--input', '-i', required=True, help='Path to input image, video, or directory')
     parser.add_argument('--output', '-o', help='Path to output file or directory (optional)')
-    parser.add_argument('--model', '-m', default='runs/detect/train2/weights/best.pt', 
-                       help='Path to model weights (default: runs/detect/train2/weights/best.pt)')
-    parser.add_argument('--conf', '-c', type=float, default=0.25, 
-                       help='Confidence threshold (default: 0.25)')
+    parser.add_argument('--model', '-m', help='Path to model weights (overrides config)')
+    parser.add_argument('--conf', '-c', type=float, help='Confidence threshold (overrides config)')
     parser.add_argument('--batch', '-b', action='store_true',
                        help='Process all supported files in the input directory')
+    parser.add_argument('--config', default='config.yaml', 
+                       help='Path to configuration file (default: config.yaml)')
+    parser.add_argument('--no-charts', action='store_true',
+                       help='Skip chart generation')
+    parser.add_argument('--no-reports', action='store_true',
+                       help='Skip JSON report generation')
     
     args = parser.parse_args()
+    
+    # Load configuration
+    config = load_config(args.config)
+    
+    # Override config with command line arguments
+    model_path = args.model if args.model else config['model_path']
+    conf_threshold = args.conf if args.conf is not None else config['confidence_threshold']
     
     # Check if input exists
     if not os.path.exists(args.input):
@@ -490,19 +625,27 @@ def main():
         return
     
     # Check if model exists
-    if not os.path.exists(args.model):
-        print(f"Error: Model file not found: {args.model}")
+    if not os.path.exists(model_path):
+        print(f"Error: Model file not found: {model_path}")
         print("Make sure you have trained the model or use the correct path.")
         return
     
     # Load model
-    print(f"Loading model: {args.model}")
-    model = YOLO(args.model)
+    print(f"Loading model: {model_path}")
+    model = YOLO(model_path)
     print("Model loaded successfully!")
+    
+    # Show current configuration
+    print(f"\nCurrent Configuration:")
+    print(f"  Model: {model_path}")
+    print(f"  Confidence threshold: {conf_threshold}")
+    print(f"  Generate charts: {not args.no_charts and config['generate_charts']}")
+    print(f"  Save reports: {not args.no_reports and config['save_reports']}")
+    print(f"  Monitor resources: {config['monitor_resources']}")
     
     # Check if batch processing is requested
     if args.batch or os.path.isdir(args.input):
-        process_batch_files(model, args.input, args.output, args.conf)
+        process_batch_files(model, args.input, args.output, conf_threshold)
         return
     
     # Single file processing
@@ -511,9 +654,9 @@ def main():
     image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp']
     
     if input_path.suffix.lower() in video_extensions:
-        detect_on_video(model, args.input, args.output, args.conf)
+        detect_on_video(model, args.input, args.output, conf_threshold)
     elif input_path.suffix.lower() in image_extensions:
-        detect_on_image(model, args.input, args.output, args.conf)
+        detect_on_image(model, args.input, args.output, conf_threshold)
     else:
         print(f"Error: Unsupported file format: {input_path.suffix}")
         print(f"Supported formats: {image_extensions + video_extensions}")
