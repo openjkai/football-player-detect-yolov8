@@ -20,6 +20,10 @@ import psutil
 import gc
 import json
 import yaml
+import csv
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from pathlib import Path
 from ultralytics import YOLO
@@ -98,8 +102,17 @@ def load_config(config_path="config.yaml"):
         'reports_dir': 'reports',
         'generate_charts': True,
         'save_reports': True,
+        'export_csv': True,
         'show_progress': True,
-        'monitor_resources': True
+        'monitor_resources': True,
+        'email_notifications': {
+            'enabled': False,
+            'smtp_server': 'smtp.gmail.com',
+            'smtp_port': 587,
+            'sender_email': '',
+            'sender_password': '',
+            'recipient_email': ''
+        }
     }
     
     if os.path.exists(config_path):
@@ -117,6 +130,127 @@ def load_config(config_path="config.yaml"):
         print(f"Default configuration created at {config_path}")
     
     return default_config
+
+def export_to_csv(detection_counts, confidence_values, input_file, frame_count, 
+                 processing_time, total_detections, avg_confidence, detection_rate,
+                 fps_processed, output_dir="exports"):
+    """
+    Export detection data to CSV format for spreadsheet analysis
+    
+    Args:
+        detection_counts: List of detection counts per frame
+        confidence_values: List of confidence scores
+        input_file: Input file name
+        frame_count: Total frames processed
+        processing_time: Total processing time
+        total_detections: Total detections
+        avg_confidence: Average confidence
+        detection_rate: Detection rate percentage
+        fps_processed: Processing speed
+        output_dir: Directory to save CSV files
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    input_name = Path(input_file).stem
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # 1. Frame-by-frame data
+    frame_csv_path = os.path.join(output_dir, f"frame_data_{input_name}_{timestamp}.csv")
+    with open(frame_csv_path, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['Frame_Number', 'Players_Detected', 'Timestamp_Seconds'])
+        
+        for i, count in enumerate(detection_counts):
+            timestamp_sec = i / fps_processed if fps_processed > 0 else i
+            writer.writerow([i + 1, count, round(timestamp_sec, 2)])
+    
+    # 2. Confidence scores data
+    if confidence_values:
+        conf_csv_path = os.path.join(output_dir, f"confidence_data_{input_name}_{timestamp}.csv")
+        with open(conf_csv_path, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['Detection_ID', 'Confidence_Score', 'Quality_Category'])
+            
+            for i, conf in enumerate(confidence_values):
+                if conf >= 0.8:
+                    category = 'High'
+                elif conf >= 0.5:
+                    category = 'Medium'
+                else:
+                    category = 'Low'
+                writer.writerow([i + 1, round(conf, 4), category])
+    
+    # 3. Summary statistics
+    summary_csv_path = os.path.join(output_dir, f"summary_stats_{input_name}_{timestamp}.csv")
+    with open(summary_csv_path, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['Metric', 'Value', 'Unit'])
+        writer.writerow(['Input_File', input_file, 'filename'])
+        writer.writerow(['Total_Frames', frame_count, 'frames'])
+        writer.writerow(['Processing_Time', round(processing_time, 2), 'seconds'])
+        writer.writerow(['Processing_Speed', round(fps_processed, 2), 'FPS'])
+        writer.writerow(['Total_Detections', total_detections, 'players'])
+        writer.writerow(['Detection_Rate', round(detection_rate, 1), 'percent'])
+        writer.writerow(['Average_Confidence', round(avg_confidence, 3), 'score'])
+        writer.writerow(['Average_Players_Per_Frame', round(total_detections / frame_count if frame_count > 0 else 0, 2), 'players'])
+        writer.writerow(['Detections_Per_Second', round(total_detections / processing_time if processing_time > 0 else 0, 1), 'players/sec'])
+    
+    print(f"CSV exports saved to:")
+    print(f"  Frame data: {frame_csv_path}")
+    if confidence_values:
+        print(f"  Confidence data: {conf_csv_path}")
+    print(f"  Summary stats: {summary_csv_path}")
+    
+    return [frame_csv_path, conf_csv_path if confidence_values else None, summary_csv_path]
+
+def send_email_notification(config, subject, body, attachments=None):
+    """
+    Send email notification for batch processing completion
+    
+    Args:
+        config: Configuration dictionary with email settings
+        subject: Email subject
+        body: Email body text
+        attachments: List of file paths to attach (optional)
+    """
+    if not config.get('email_notifications', {}).get('enabled', False):
+        return
+    
+    email_config = config['email_notifications']
+    
+    try:
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = email_config['sender_email']
+        msg['To'] = email_config['recipient_email']
+        msg['Subject'] = subject
+        
+        # Add body
+        msg.attach(MIMEText(body, 'plain'))
+        
+        # Add attachments if provided
+        if attachments:
+            for file_path in attachments:
+                if file_path and os.path.exists(file_path):
+                    with open(file_path, 'rb') as attachment:
+                        part = MIMEText(attachment.read(), 'base64', 'utf-8')
+                        part.add_header(
+                            'Content-Disposition',
+                            f'attachment; filename= {os.path.basename(file_path)}'
+                        )
+                        msg.attach(part)
+        
+        # Send email
+        server = smtplib.SMTP(email_config['smtp_server'], email_config['smtp_port'])
+        server.starttls()
+        server.login(email_config['sender_email'], email_config['sender_password'])
+        text = msg.as_string()
+        server.sendmail(email_config['sender_email'], email_config['recipient_email'], text)
+        server.quit()
+        
+        print(f"Email notification sent to {email_config['recipient_email']}")
+        
+    except Exception as e:
+        print(f"Failed to send email notification: {e}")
 
 def generate_detection_charts(detection_counts, detection_distribution, confidence_values, 
                             input_file, output_dir="charts"):
@@ -529,17 +663,22 @@ def detect_on_video(model, video_path, output_path=None, conf_threshold=0.25):
         # Generate detection charts
         generate_detection_charts(detection_counts, detection_distribution, confidence_values, video_path)
         
+        # Export to CSV format
+        csv_files = export_to_csv(detection_counts, confidence_values, video_path, frame_count,
+                                processing_time, total_detections, avg_confidence, detection_rate,
+                                fps_processed)
+        
         # Save detection report to JSON
-        save_detection_report(video_path, frame_count, processing_time, total_detections,
-                            avg_confidence, detection_rate, fps_processed, detection_distribution,
-                            min_confidence, max_confidence, detection_std, detection_median,
-                            memory_used, final_stats['memory_mb'])
+        json_report_path = save_detection_report(video_path, frame_count, processing_time, total_detections,
+                                               avg_confidence, detection_rate, fps_processed, detection_distribution,
+                                               min_confidence, max_confidence, detection_std, detection_median,
+                                               memory_used, final_stats['memory_mb'])
         
         # Clean up memory
         gc.collect()
         print(f"Detection completed successfully!")
 
-def process_batch_files(model, input_dir, output_dir, conf_threshold):
+def process_batch_files(model, input_dir, output_dir, conf_threshold, config=None):
     """
     Process multiple files in a directory
     
@@ -548,6 +687,7 @@ def process_batch_files(model, input_dir, output_dir, conf_threshold):
         input_dir: Directory containing input files
         output_dir: Directory to save outputs
         conf_threshold: Confidence threshold
+        config: Configuration dictionary for notifications
     """
     input_path = Path(input_dir)
     output_path = Path(output_dir) if output_dir else None
@@ -567,6 +707,11 @@ def process_batch_files(model, input_dir, output_dir, conf_threshold):
         return
     
     print(f"Found {len(files_to_process)} files to process")
+    
+    # Track batch processing stats
+    batch_start_time = time.time()
+    successful_files = 0
+    failed_files = []
     
     # Process each file
     for i, file_path in enumerate(files_to_process, 1):
@@ -589,11 +734,53 @@ def process_batch_files(model, input_dir, output_dir, conf_threshold):
                 detect_on_video(model, str(file_path), str(output_file) if output_file else None, conf_threshold)
             else:
                 detect_on_image(model, str(file_path), str(output_file) if output_file else None, conf_threshold)
+            successful_files += 1
         except Exception as e:
             print(f"Error processing {file_path.name}: {e}")
+            failed_files.append(file_path.name)
             continue
     
-    print(f"\nBatch processing completed! Processed {len(files_to_process)} files.")
+    # Calculate batch processing time
+    batch_end_time = time.time()
+    batch_processing_time = batch_end_time - batch_start_time
+    
+    # Print batch summary
+    print(f"\n{'='*60}")
+    print(f"BATCH PROCESSING SUMMARY")
+    print(f"{'='*60}")
+    print(f"Total files found: {len(files_to_process)}")
+    print(f"Successfully processed: {successful_files}")
+    print(f"Failed: {len(failed_files)}")
+    print(f"Total processing time: {batch_processing_time:.2f} seconds")
+    print(f"Average time per file: {batch_processing_time/len(files_to_process):.2f} seconds")
+    
+    if failed_files:
+        print(f"Failed files: {', '.join(failed_files)}")
+    
+    # Send email notification if configured
+    if config and config.get('email_notifications', {}).get('enabled', False):
+        subject = f"Batch Processing Complete - {successful_files}/{len(files_to_process)} files processed"
+        body = f"""
+Batch processing has completed successfully!
+
+Summary:
+- Total files: {len(files_to_process)}
+- Successfully processed: {successful_files}
+- Failed: {len(failed_files)}
+- Processing time: {batch_processing_time:.2f} seconds
+- Average time per file: {batch_processing_time/len(files_to_process):.2f} seconds
+
+Input directory: {input_dir}
+Output directory: {output_dir if output_dir else 'Same as input'}
+
+{f'Failed files: {", ".join(failed_files)}' if failed_files else 'All files processed successfully!'}
+
+This is an automated notification from the Football Player Detection system.
+        """
+        
+        send_email_notification(config, subject, body)
+    
+    print(f"Batch processing completed! Processed {successful_files}/{len(files_to_process)} files.")
 
 def main():
     parser = argparse.ArgumentParser(description='Football Player Detection using YOLOv8')
@@ -609,6 +796,10 @@ def main():
                        help='Skip chart generation')
     parser.add_argument('--no-reports', action='store_true',
                        help='Skip JSON report generation')
+    parser.add_argument('--no-csv', action='store_true',
+                       help='Skip CSV export generation')
+    parser.add_argument('--email-notify', action='store_true',
+                       help='Enable email notifications (requires config setup)')
     
     args = parser.parse_args()
     
@@ -635,17 +826,23 @@ def main():
     model = YOLO(model_path)
     print("Model loaded successfully!")
     
+    # Override email notifications if requested
+    if args.email_notify:
+        config['email_notifications']['enabled'] = True
+    
     # Show current configuration
     print(f"\nCurrent Configuration:")
     print(f"  Model: {model_path}")
     print(f"  Confidence threshold: {conf_threshold}")
     print(f"  Generate charts: {not args.no_charts and config['generate_charts']}")
     print(f"  Save reports: {not args.no_reports and config['save_reports']}")
+    print(f"  Export CSV: {not args.no_csv and config['export_csv']}")
+    print(f"  Email notifications: {config['email_notifications']['enabled']}")
     print(f"  Monitor resources: {config['monitor_resources']}")
     
     # Check if batch processing is requested
     if args.batch or os.path.isdir(args.input):
-        process_batch_files(model, args.input, args.output, conf_threshold)
+        process_batch_files(model, args.input, args.output, conf_threshold, config)
         return
     
     # Single file processing
