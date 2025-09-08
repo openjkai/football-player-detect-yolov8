@@ -1,0 +1,372 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Football Player Detection{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="h3 mb-0">
+        <i class="fas fa-tachometer-alt me-2"></i>
+        Dashboard Overview
+    </h1>
+    <div>
+        <button class="btn btn-primary me-2" onclick="startBatchProcessing()">
+            <i class="fas fa-play me-1"></i>
+            Start Batch Processing
+        </button>
+        <a href="/upload" class="btn btn-outline-primary">
+            <i class="fas fa-plus me-1"></i>
+            Upload Files
+        </a>
+    </div>
+</div>
+
+<!-- System Status Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card metric-card h-100">
+            <div class="card-body text-center">
+                <i class="fas fa-tasks fa-2x mb-3"></i>
+                <h4 id="total-jobs">0</h4>
+                <p class="mb-0">Total Jobs</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card metric-card h-100">
+            <div class="card-body text-center">
+                <i class="fas fa-check-circle fa-2x mb-3"></i>
+                <h4 id="completed-jobs">0</h4>
+                <p class="mb-0">Completed</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card metric-card h-100">
+            <div class="card-body text-center">
+                <i class="fas fa-clock fa-2x mb-3"></i>
+                <h4 id="processing-speed">0</h4>
+                <p class="mb-0">Avg FPS</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card metric-card h-100">
+            <div class="card-body text-center">
+                <i class="fas fa-users fa-2x mb-3"></i>
+                <h4 id="total-detections">0</h4>
+                <p class="mb-0">Total Players</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Current Processing Status -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-cogs me-2"></i>
+                    Current Processing Status
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="processing-status" class="text-center py-4">
+                    <div class="d-flex align-items-center justify-content-center">
+                        <svg class="progress-ring me-3">
+                            <circle class="progress-ring-circle"></circle>
+                            <circle class="progress-ring-progress" id="progress-circle"></circle>
+                        </svg>
+                        <div>
+                            <h6 id="status-text" class="mb-1">System Ready</h6>
+                            <p id="status-details" class="text-muted mb-0">No active processing</p>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <div class="progress" style="height: 8px;">
+                            <div id="progress-bar" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Jobs and Quick Actions -->
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="fas fa-history me-2"></i>
+                    Recent Jobs
+                </h5>
+                <a href="/history" class="btn btn-sm btn-outline-primary">View All</a>
+            </div>
+            <div class="card-body">
+                <div id="recent-jobs">
+                    <div class="text-center py-4">
+                        <i class="fas fa-spinner fa-spin fa-2x text-muted"></i>
+                        <p class="text-muted mt-2">Loading recent jobs...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-bolt me-2"></i>
+                    Quick Actions
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="/upload" class="btn btn-primary">
+                        <i class="fas fa-cloud-upload-alt me-2"></i>
+                        Upload New Files
+                    </a>
+                    <button class="btn btn-outline-primary" onclick="refreshData()">
+                        <i class="fas fa-sync-alt me-2"></i>
+                        Refresh Data
+                    </button>
+                    <a href="/analytics" class="btn btn-outline-secondary">
+                        <i class="fas fa-chart-bar me-2"></i>
+                        View Analytics
+                    </a>
+                </div>
+                
+                <hr>
+                
+                <h6 class="mb-3">System Info</h6>
+                <div class="small text-muted">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>CPU Usage:</span>
+                        <span id="cpu-usage">--</span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>Memory Usage:</span>
+                        <span id="memory-usage">--</span>
+                    </div>
+                    <div class="d-flex justify-content-between">
+                        <span>Active Jobs:</span>
+                        <span id="active-jobs">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let processingStatus = {
+    is_processing: false,
+    progress: 0
+};
+
+// Initialize dashboard
+document.addEventListener('DOMContentLoaded', function() {
+    loadAnalytics();
+    loadRecentJobs();
+    
+    // Refresh data every 30 seconds
+    setInterval(refreshData, 30000);
+});
+
+// Socket.IO event handlers
+socket.on('status_update', function(status) {
+    processingStatus = status;
+    updateProcessingStatus(status);
+});
+
+socket.on('job_completed', function(data) {
+    loadRecentJobs();
+    loadAnalytics();
+});
+
+socket.on('batch_completed', function(data) {
+    loadRecentJobs();
+    loadAnalytics();
+    showNotification('Batch processing completed!', 'success');
+});
+
+function updateProcessingStatus(status) {
+    const statusText = document.getElementById('status-text');
+    const statusDetails = document.getElementById('status-details');
+    const progressBar = document.getElementById('progress-bar');
+    const progressCircle = document.getElementById('progress-circle');
+    
+    if (status.is_processing) {
+        statusText.textContent = 'Processing';
+        statusDetails.textContent = status.current_file ? 
+            `Processing: ${status.current_file}` : 
+            `${status.processed_files || 0} of ${status.total_files || 0} files`;
+        
+        const progress = status.progress || 0;
+        progressBar.style.width = progress + '%';
+        
+        // Update circular progress
+        const circumference = 2 * Math.PI * 26;
+        const strokeDasharray = `${(progress / 100) * circumference} ${circumference}`;
+        progressCircle.style.strokeDasharray = strokeDasharray;
+        
+    } else {
+        statusText.textContent = 'System Ready';
+        statusDetails.textContent = 'No active processing';
+        progressBar.style.width = '0%';
+        progressCircle.style.strokeDasharray = '0 163.36';
+    }
+}
+
+function loadAnalytics() {
+    fetch('/api/analytics')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('total-jobs').textContent = data.summary.total_jobs;
+            document.getElementById('completed-jobs').textContent = data.summary.completed_jobs;
+            document.getElementById('processing-speed').textContent = data.summary.avg_processing_speed.toFixed(1);
+            document.getElementById('total-detections').textContent = data.summary.total_detections.toLocaleString();
+        })
+        .catch(error => {
+            console.error('Error loading analytics:', error);
+        });
+}
+
+function loadRecentJobs() {
+    fetch('/api/jobs')
+        .then(response => response.json())
+        .then(jobs => {
+            const container = document.getElementById('recent-jobs');
+            
+            if (jobs.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-4">
+                        <i class="fas fa-inbox fa-2x text-muted"></i>
+                        <p class="text-muted mt-2">No jobs found. Upload some files to get started!</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            const recentJobs = jobs.slice(0, 5);
+            container.innerHTML = recentJobs.map(job => `
+                <div class="file-item">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="mb-1">${job.filename}</h6>
+                            <small class="text-muted">
+                                <span class="status-indicator status-${job.status}"></span>
+                                ${job.status.charAt(0).toUpperCase() + job.status.slice(1)}
+                                ${job.total_detections ? ` • ${job.total_detections} players detected` : ''}
+                            </small>
+                        </div>
+                        <div class="text-end">
+                            ${job.status === 'uploaded' ? 
+                                `<button class="btn btn-sm btn-primary" onclick="processFile(${job.id})">
+                                    <i class="fas fa-play"></i>
+                                </button>` : 
+                                job.status === 'completed' ?
+                                `<button class="btn btn-sm btn-success" onclick="downloadResults(${job.id})">
+                                    <i class="fas fa-download"></i>
+                                </button>` : ''
+                            }
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        })
+        .catch(error => {
+            console.error('Error loading recent jobs:', error);
+            document.getElementById('recent-jobs').innerHTML = `
+                <div class="text-center py-4">
+                    <i class="fas fa-exclamation-triangle fa-2x text-warning"></i>
+                    <p class="text-muted mt-2">Error loading jobs. Please try again.</p>
+                </div>
+            `;
+        });
+}
+
+function processFile(jobId) {
+    if (processingStatus.is_processing) {
+        showNotification('Another file is currently being processed. Please wait.', 'warning');
+        return;
+    }
+    
+    fetch(`/api/process/${jobId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Processing started!', 'success');
+            } else {
+                showNotification(data.error || 'Failed to start processing', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error starting processing:', error);
+            showNotification('Error starting processing', 'error');
+        });
+}
+
+function startBatchProcessing() {
+    if (processingStatus.is_processing) {
+        showNotification('Processing is already in progress', 'warning');
+        return;
+    }
+    
+    fetch('/api/batch_process')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showNotification('Batch processing started!', 'success');
+            } else {
+                showNotification(data.error || 'Failed to start batch processing', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error starting batch processing:', error);
+            showNotification('Error starting batch processing', 'error');
+        });
+}
+
+function downloadResults(jobId) {
+    window.open(`/api/download/${jobId}`, '_blank');
+}
+
+function refreshData() {
+    loadAnalytics();
+    loadRecentJobs();
+    socket.emit('request_status');
+    showNotification('Data refreshed!', 'info');
+}
+
+function showNotification(message, type = 'info') {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = `alert alert-${type === 'error' ? 'danger' : type} alert-dismissible fade show position-fixed`;
+    notification.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+    notification.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        if (notification.parentNode) {
+            notification.remove();
+        }
+    }, 5000);
+}
+
+// Initialize progress circle
+const progressCircle = document.getElementById('progress-circle');
+const circumference = 2 * Math.PI * 26;
+progressCircle.style.strokeDasharray = `0 ${circumference}`;
+</script>
+{% endblock %} 
